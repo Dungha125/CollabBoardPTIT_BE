@@ -8,6 +8,8 @@ require('dotenv').config();
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 app.use(cors({
   origin: 'https://collab-board-ptit.vercel.app',
   credentials: true
@@ -20,8 +22,10 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
   resave: false,
   saveUninitialized: false,
+  proxy: true,
   cookie: {
-    secure: false, 
+    sameSite: 'none',  
+    secure: true,
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000
   }
@@ -33,7 +37,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/auth/google/callback'
+    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'https://collabboardptitbe-production.up.railway.app/auth/google/callback'
   },
   (accessToken, refreshToken, profile, done) => {
     const user = {
