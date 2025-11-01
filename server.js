@@ -75,11 +75,18 @@ app.get('/auth/google',
 );
 
 app.get('/auth/google/callback',
-  passport.authenticate('google', { 
-    failureRedirect: 'http://localhost:3000' 
-  }),
+  passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    res.redirect('http://localhost:3000');
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'https://collab-board-ptit.vercel.app'
+    ];
+    const referer = req.get('origin') || '';
+    const redirectUrl = allowedOrigins.includes(referer)
+      ? referer
+      : 'https://collab-board-ptit.vercel.app';
+
+    res.redirect(redirectUrl);
   }
 );
 
