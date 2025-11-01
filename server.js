@@ -9,10 +9,7 @@ require('dotenv').config();
 const app = express();
 
 app.use(cors({
-  origin: [
-    // 'http://localhost:3000',
-    'https://collab-board-ptit.vercel.app'
-  ],
+  origin:'https://collab-board-ptit.vercel.app',
   credentials: true
 }));
 
