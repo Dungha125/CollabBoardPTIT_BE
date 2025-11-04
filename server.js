@@ -167,15 +167,6 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
     return res.status(404).json({ error: 'Room not found' });
   }
   
-  // Kiểm tra config email
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.error('❌ EMAIL_USER or EMAIL_PASS not configured in .env file');
-    return res.status(500).json({ 
-      error: 'Email service not configured. Please contact administrator.',
-      debug: 'EMAIL_USER or EMAIL_PASS missing in environment variables'
-    });
-  }
-  
   // Configure email transporter (using Gmail as example)
   // Note: You need to set EMAIL_USER and EMAIL_PASS in .env
   const transporter = nodemailer.createTransport({
@@ -187,15 +178,6 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
   });
   
   const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
-  
-  console.log(`📧 Attempting to send ${emails.length} invitation(s) for room ${roomId}`);
-  console.log(`   From: ${process.env.EMAIL_USER}`);
-  console.log(`   To: ${emails.join(', ')}`);
-  
-  // Trả response ngay lập tức cho client
-  res.json({ success: true, message: 'Đang gửi lời mời...' });
-  
-  // Gửi email bất đồng bộ ở background (không chờ)
   const emailPromises = emails.map(email => {
     const mailOptions = {
       from: process.env.EMAIL_USER,
@@ -215,17 +197,13 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
     return transporter.sendMail(mailOptions);
   });
   
-  // Xử lý lỗi trong background
-  Promise.all(emailPromises)
-    .then(() => {
-      console.log(`✅ Successfully sent ${emails.length} invitation email(s) for room ${roomId}`);
-    })
-    .catch((error) => {
-      console.error('❌ Error sending invitation emails:');
-      console.error('   Error details:', error.message);
-      console.error('   Full error:', error);
-      // Email failed nhưng user đã nhận được response, không ảnh hưởng UX
-    });
+  try {
+    await Promise.all(emailPromises);
+    res.json({ success: true, message: 'Đã gửi lời mời thành công' });
+  } catch (error) {
+    console.error('Error sending emails:', error);
+    res.status(500).json({ error: 'Không thể gửi email. Vui lòng kiểm tra cấu hình EMAIL_USER và EMAIL_PASS trong .env' });
+  }
 });
 
 // Socket.io connection handling
