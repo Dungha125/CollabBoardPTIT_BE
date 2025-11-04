@@ -4,17 +4,27 @@ const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
+const { v4: uuidv4 } = require('uuid');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
 
-app.set('trust proxy', 1);
+const io = new Server(server, {
+  cors: {
+    origin: 'http://localhost:3000',
+    credentials: true,
+    methods: ['GET', 'POST']
+  }
+});
 
 app.use(cors({
-  origin: 'https://collab-board-ptit.vercel.app',
+  origin: 'http://localhost:3000', 
   credentials: true
 }));
-
 
 app.use(express.json());
 
@@ -22,10 +32,8 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
   resave: false,
   saveUninitialized: false,
-  proxy: true,
   cookie: {
-    sameSite: 'none',  
-    secure: true,
+    secure: false, 
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000
   }
@@ -37,7 +45,7 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'https://collabboardptitbe-production.up.railway.app/auth/google/callback'
+    callbackURL: '/auth/google/callback'
   },
   (accessToken, refreshToken, profile, done) => {
     const user = {
@@ -75,13 +83,12 @@ app.get('/auth/google',
   })
 );
 
-app.get(
-  '/auth/google/callback',
-  passport.authenticate('google', {
-    failureRedirect: 'https://collab-board-ptit.vercel.app',
+app.get('/auth/google/callback',
+  passport.authenticate('google', { 
+    failureRedirect: 'http://localhost:3000' 
   }),
   (req, res) => {
-    res.redirect('https://collab-board-ptit.vercel.app');
+    res.redirect('http://localhost:3000');
   }
 );
 
@@ -112,7 +119,174 @@ app.get('/api/user/profile', isAuthenticated, (req, res) => {
   res.json({ user: req.user });
 });
 
+// Room management
+const rooms = new Map(); // roomId -> { users: Set, elements: [], appState: {} }
+
+// Create a new room
+app.post('/api/rooms/create', isAuthenticated, (req, res) => {
+  const roomId = uuidv4();
+  rooms.set(roomId, {
+    users: new Set(),
+    elements: [],
+    appState: {},
+    createdBy: req.user.email,
+    createdAt: new Date()
+  });
+  res.json({ roomId, shareUrl: `http://localhost:3000/room/${roomId}` });
+});
+
+// Get room info
+app.get('/api/rooms/:roomId', isAuthenticated, (req, res) => {
+  const { roomId } = req.params;
+  const room = rooms.get(roomId);
+  
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  res.json({
+    roomId,
+    userCount: room.users.size,
+    createdBy: room.createdBy,
+    createdAt: room.createdAt
+  });
+});
+
+// Send invitation email
+app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
+  const { roomId, emails } = req.body;
+  
+  if (!roomId || !emails || !Array.isArray(emails)) {
+    return res.status(400).json({ error: 'Invalid request' });
+  }
+  
+  const room = rooms.get(roomId);
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  // Configure email transporter (using Gmail as example)
+  // Note: You need to set EMAIL_USER and EMAIL_PASS in .env
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+  
+  const shareUrl = `http://localhost:3000/room/${roomId}`;
+  const emailPromises = emails.map(email => {
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: `${req.user.name} đã mời bạn vào CollabBoard`,
+      html: `
+        <h2>Lời mời vẽ cùng nhau trên CollabBoard</h2>
+        <p>${req.user.name} (${req.user.email}) đã mời bạn tham gia vẽ cùng!</p>
+        <p>Click vào link dưới đây để tham gia:</p>
+        <a href="${shareUrl}" style="display: inline-block; padding: 10px 20px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 5px;">
+          Tham gia ngay
+        </a>
+        <p>Hoặc copy link này: ${shareUrl}</p>
+      `
+    };
+    
+    return transporter.sendMail(mailOptions);
+  });
+  
+  try {
+    await Promise.all(emailPromises);
+    res.json({ success: true, message: 'Đã gửi lời mời thành công' });
+  } catch (error) {
+    console.error('Error sending emails:', error);
+    res.status(500).json({ error: 'Không thể gửi email. Vui lòng kiểm tra cấu hình EMAIL_USER và EMAIL_PASS trong .env' });
+  }
+});
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+  
+  // Join a room
+  socket.on('join-room', ({ roomId, user }) => {
+    socket.join(roomId);
+    
+    const room = rooms.get(roomId);
+    if (room) {
+      room.users.add(socket.id);
+      
+      // Send current room state to the new user
+      socket.emit('room-state', {
+        elements: room.elements,
+        appState: room.appState
+      });
+      
+      // Notify others in the room
+      socket.to(roomId).emit('user-joined', {
+        userId: socket.id,
+        user: user
+      });
+      
+      // Send user count update
+      io.to(roomId).emit('user-count', room.users.size);
+      
+      console.log(`User ${socket.id} joined room ${roomId}`);
+    }
+  });
+  
+  // Handle drawing updates
+  socket.on('drawing-update', ({ roomId, elements, appState }) => {
+    const room = rooms.get(roomId);
+    if (room) {
+      // Update room state
+      room.elements = elements;
+      room.appState = appState;
+      
+      // Broadcast to all other users in the room
+      socket.to(roomId).emit('drawing-update', { elements, appState });
+    }
+  });
+  
+  // Handle pointer movement
+  socket.on('pointer-update', ({ roomId, pointer, user }) => {
+    socket.to(roomId).emit('pointer-update', {
+      userId: socket.id,
+      pointer,
+      user
+    });
+  });
+  
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    
+    // Remove user from all rooms
+    rooms.forEach((room, roomId) => {
+      if (room.users.has(socket.id)) {
+        room.users.delete(socket.id);
+        
+        // Notify others
+        io.to(roomId).emit('user-left', { userId: socket.id });
+        io.to(roomId).emit('user-count', room.users.size);
+        
+        // Clean up empty rooms after 1 hour
+        if (room.users.size === 0) {
+          setTimeout(() => {
+            const currentRoom = rooms.get(roomId);
+            if (currentRoom && currentRoom.users.size === 0) {
+              rooms.delete(roomId);
+              console.log(`Room ${roomId} deleted due to inactivity`);
+            }
+          }, 60 * 60 * 1000); // 1 hour
+        }
+      }
+    });
+  });
+});
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Socket.io server ready`);
 });
