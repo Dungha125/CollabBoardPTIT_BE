@@ -13,6 +13,18 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 
+// Tạo transporter 1 lần duy nhất (reuse cho tất cả requests)
+const emailTransporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+  pool: true, // Sử dụng connection pooling
+  maxConnections: 5,
+  maxMessages: 100
+});
+
 const io = new Server(server, {
   cors: {
     origin: 'https://collab-board-ptit.vercel.app',
@@ -167,17 +179,12 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
     return res.status(404).json({ error: 'Room not found' });
   }
   
-  // Configure email transporter (using Gmail as example)
-  // Note: You need to set EMAIL_USER and EMAIL_PASS in .env
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-  
   const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
+  
+  // ✅ Trả response ngay lập tức cho client (không chờ email)
+  res.json({ success: true, message: 'Đang gửi lời mời...' });
+  
+  // ✅ Gửi email bất đồng bộ ở background (không await)
   const emailPromises = emails.map(email => {
     const mailOptions = {
       from: process.env.EMAIL_USER,
@@ -194,16 +201,18 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
       `
     };
     
-    return transporter.sendMail(mailOptions);
+    return emailTransporter.sendMail(mailOptions);
   });
   
-  try {
-    await Promise.all(emailPromises);
-    res.json({ success: true, message: 'Đã gửi lời mời thành công' });
-  } catch (error) {
-    console.error('Error sending emails:', error);
-    res.status(500).json({ error: 'Không thể gửi email. Vui lòng kiểm tra cấu hình EMAIL_USER và EMAIL_PASS trong .env' });
-  }
+  // ✅ Xử lý email trong background (không block response)
+  Promise.all(emailPromises)
+    .then(() => {
+      console.log(`✓ Sent ${emails.length} invitation email(s) for room ${roomId}`);
+    })
+    .catch((error) => {
+      console.error('✗ Error sending emails:', error);
+      // Email failed nhưng user đã nhận được response, không ảnh hưởng UX
+    });
 });
 
 // Socket.io connection handling
