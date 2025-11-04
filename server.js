@@ -9,6 +9,7 @@ const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
+const brevo = require('@getbrevo/brevo');
 
 const app = express();
 const server = http.createServer(app);
@@ -167,65 +168,44 @@ app.get('/api/rooms/:roomId', isAuthenticated, (req, res) => {
 });
 
 app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
-    const { roomId, emails } = req.body;
-    
-    if (!roomId || !emails || !Array.isArray(emails)) {
-      return res.status(400).json({ error: 'Invalid request' });
-    }
-    
-    const room = rooms.get(roomId);
-    if (!room) {
-      return res.status(404).json({ error: 'Room not found' });
-    }
-    
-    // Cấu hình email Transporter sử dụng SendGrid API (Giải pháp cho lỗi ETIMEDOUT)
-    const transporter = nodemailer.createTransport({
-      service: 'SendGrid', // Thay vì 'gmail'
-      auth: {
-        user: 'apikey', // Bắt buộc phải là 'apikey' cho SendGrid
-        pass: process.env.SENDGRID_API_KEY // KHÓA API CỦA SENDGRID
-      },
-      // Loại bỏ host, port, secure, requireTLS, timeout vì SendGrid Service tự xử lý
-    });
-    
-    const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
-    
-   
-    // Gửi email bất đồng bộ ở background (không chờ)
-    const emailPromises = emails.map(email => {
-      const mailOptions = {
-        // Từ email phải là một email đã được xác minh trên SendGrid
-        from: `"${req.user.name} (CollabBoard)" <${process.env.EMAIL_USER}>`, 
-        to: email,
-        subject: `Lời mời: ${req.user.name} muốn vẽ cùng bạn trên CollabBoard`, // Subject chi tiết hơn
-        html: `
-          <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-            <h2 style="color: #4285f4;">Bạn có một lời mời tham gia bảng vẽ!</h2>
-            <p>Chào bạn,</p>
-            <p><strong>${req.user.name}</strong> (${req.user.email}) đã mời bạn tham gia phòng vẽ chung trên CollabBoard.</p>
-            <p style="margin-top: 20px;">
-              <a href="${shareUrl}" style="display: inline-block; padding: 12px 25px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
-                THAM GIA PHÒNG VẼ NGAY
-              </a>
-            </p>
-            <p style="font-size: 12px; color: #888; margin-top: 30px;">Nếu nút trên không hoạt động, bạn có thể sao chép liên kết này: ${shareUrl}</p>
-          </div>
-        `
-      };
-      
-      return transporter.sendMail(mailOptions);
-    });
-    
-    // Xử lý lỗi trong background và log chi tiết
-    Promise.all(emailPromises)
-      .then((results) => {
-        console.log(`✓ Sent ${emails.length} invitation email(s) for room ${roomId}. Nodemailer results:`, results.map(r => r.response));
-      })
-      .catch((error) => {
-        // Lỗi này sẽ xuất hiện trên console Railway nếu gửi thất bại
-        console.error('!!! CRITICAL ERROR: Email sending failed. Check SENDGRID_API_KEY:', error.message);
-      });
+  const { roomId, emails } = req.body;
+  
+  if (!roomId || !emails || !Array.isArray(emails)) {
+    return res.status(400).json({ error: 'Invalid request' });
+  }
+  
+  const room = rooms.get(roomId);
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
+  
+  res.json({ success: true, message: 'Đang gửi lời mời...' });
+  
+  let apiInstance = new brevo.TransactionalEmailsApi();
+  apiInstance.setApiKey(brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
+  
+  const emailPromises = emails.map(email => {
+    let sendSmtpEmail = new brevo.SendSmtpEmail();
+    sendSmtpEmail.subject = `${req.user.name} mời bạn vẽ cùng trên CollabBoard`;
+    sendSmtpEmail.htmlContent = `
+      <div style="font-family: Arial, sans-serif; padding: 20px;">
+        <h2 style="color: #4285f4;">Lời mời tham gia bảng vẽ!</h2>
+        <p><strong>${req.user.name}</strong> mời bạn tham gia.</p>
+        <p><a href="${shareUrl}" style="padding: 12px 25px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 6px;">THAM GIA NGAY</a></p>
+      </div>
+    `;
+    sendSmtpEmail.sender = { name: "CollabBoard", email: process.env.BREVO_SENDER_EMAIL };
+    sendSmtpEmail.to = [{ email: email }];
+    
+    return apiInstance.sendTransacEmail(sendSmtpEmail);
   });
+  
+  Promise.all(emailPromises)
+    .then(() => console.log(`✓ Sent ${emails.length} invitations`))
+    .catch((error) => console.error('Email error:', error));
+});
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
