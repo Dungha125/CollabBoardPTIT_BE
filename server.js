@@ -178,6 +178,11 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
   });
   
   const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
+  
+  // Trả response ngay lập tức cho client
+  res.json({ success: true, message: 'Đang gửi lời mời...' });
+  
+  // Gửi email bất đồng bộ ở background (không chờ)
   const emailPromises = emails.map(email => {
     const mailOptions = {
       from: process.env.EMAIL_USER,
@@ -197,13 +202,15 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
     return transporter.sendMail(mailOptions);
   });
   
-  try {
-    await Promise.all(emailPromises);
-    res.json({ success: true, message: 'Đã gửi lời mời thành công' });
-  } catch (error) {
-    console.error('Error sending emails:', error);
-    res.status(500).json({ error: 'Không thể gửi email. Vui lòng kiểm tra cấu hình EMAIL_USER và EMAIL_PASS trong .env' });
-  }
+  // Xử lý lỗi trong background
+  Promise.all(emailPromises)
+    .then(() => {
+      console.log(`✓ Sent ${emails.length} invitation email(s) for room ${roomId}`);
+    })
+    .catch((error) => {
+      console.error('Error sending emails:', error);
+      // Email failed nhưng user đã nhận được response, không ảnh hưởng UX
+    });
 });
 
 // Socket.io connection handling
