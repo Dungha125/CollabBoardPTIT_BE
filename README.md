@@ -58,7 +58,7 @@ cp .env.example .env
    EMAIL_FROM=CollabBoard <onboarding@resend.dev>
    ```
 
-**📖 Xem hướng dẫn chi tiết:** [SETUP_EMAIL.md](./SETUP_EMAIL.md)
+**📖 Xem hướng dẫn chi tiết:** [SETUP_RESEND.md](./SETUP_RESEND.md)
 
 **🏠 Local Development - Gmail SMTP (Fallback):**
 
