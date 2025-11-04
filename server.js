@@ -32,9 +32,10 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
   resave: false,
   saveUninitialized: false,
+  proxy: true,
   cookie: {
-    secure: process.env.NODE_ENV === 'production' ? true : false, 
-    sameSite: process.env.NODE_ENV === 'production' ? 'Lax' : 'None',
+    sameSite: 'none',  
+    secure: true,
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000
   }
