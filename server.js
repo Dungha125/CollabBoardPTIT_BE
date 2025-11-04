@@ -8,38 +8,22 @@ const http = require('http');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const nodemailer = require('nodemailer');
-const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 
-// ✅ Helper function: Gửi email qua Resend API (tránh SMTP timeout trên Railway)
-async function sendEmailViaResend({ to, subject, html }) {
-  if (!process.env.RESEND_API_KEY) {
-    throw new Error('RESEND_API_KEY not configured');
-  }
-  
-  try {
-    const response = await axios.post('https://api.resend.com/emails', {
-      from: process.env.EMAIL_FROM || 'CollabBoard <onboarding@resend.dev>',
-      to: Array.isArray(to) ? to : [to],
-      subject,
-      html
-    }, {
-      headers: {
-        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 10000 // 10s timeout
-    });
-    
-    return response.data;
-  } catch (error) {
-    const errMsg = error.response?.data?.message || error.message;
-    throw new Error(`Resend API error: ${errMsg}`);
-  }
-}
+// Tạo transporter 1 lần duy nhất (reuse cho tất cả requests)
+const emailTransporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+  pool: true, // Sử dụng connection pooling
+  maxConnections: 5,
+  maxMessages: 100
+});
 
 const io = new Server(server, {
   cors: {
@@ -182,65 +166,66 @@ app.get('/api/rooms/:roomId', isAuthenticated, (req, res) => {
   });
 });
 
-// Send invitation email
 app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
-  const { roomId, emails } = req.body;
-  
-  if (!roomId || !emails || !Array.isArray(emails)) {
-    return res.status(400).json({ error: 'Invalid request' });
-  }
-  
-  const room = rooms.get(roomId);
-  if (!room) {
-    return res.status(404).json({ error: 'Room not found' });
-  }
-  
-  const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
-  
-  // ✅ TRẢ RESPONSE NGAY LẬP TỨC (không chờ email)
-  res.json({ 
-    success: true, 
-    message: 'Đang gửi lời mời qua email...',
-    shareUrl: shareUrl
+    const { roomId, emails } = req.body;
+    
+    if (!roomId || !emails || !Array.isArray(emails)) {
+      return res.status(400).json({ error: 'Invalid request' });
+    }
+    
+    const room = rooms.get(roomId);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    
+    // Cấu hình email Transporter sử dụng SendGrid API (Giải pháp cho lỗi ETIMEDOUT)
+    const transporter = nodemailer.createTransport({
+      service: 'SendGrid', // Thay vì 'gmail'
+      auth: {
+        user: 'apikey', // Bắt buộc phải là 'apikey' cho SendGrid
+        pass: process.env.SENDGRID_API_KEY // KHÓA API CỦA SENDGRID
+      },
+      // Loại bỏ host, port, secure, requireTLS, timeout vì SendGrid Service tự xử lý
+    });
+    
+    const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
+    
+   
+    // Gửi email bất đồng bộ ở background (không chờ)
+    const emailPromises = emails.map(email => {
+      const mailOptions = {
+        // Từ email phải là một email đã được xác minh trên SendGrid
+        from: `"${req.user.name} (CollabBoard)" <${process.env.EMAIL_USER}>`, 
+        to: email,
+        subject: `Lời mời: ${req.user.name} muốn vẽ cùng bạn trên CollabBoard`, // Subject chi tiết hơn
+        html: `
+          <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+            <h2 style="color: #4285f4;">Bạn có một lời mời tham gia bảng vẽ!</h2>
+            <p>Chào bạn,</p>
+            <p><strong>${req.user.name}</strong> (${req.user.email}) đã mời bạn tham gia phòng vẽ chung trên CollabBoard.</p>
+            <p style="margin-top: 20px;">
+              <a href="${shareUrl}" style="display: inline-block; padding: 12px 25px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                THAM GIA PHÒNG VẼ NGAY
+              </a>
+            </p>
+            <p style="font-size: 12px; color: #888; margin-top: 30px;">Nếu nút trên không hoạt động, bạn có thể sao chép liên kết này: ${shareUrl}</p>
+          </div>
+        `
+      };
+      
+      return transporter.sendMail(mailOptions);
+    });
+    
+    // Xử lý lỗi trong background và log chi tiết
+    Promise.all(emailPromises)
+      .then((results) => {
+        console.log(`✓ Sent ${emails.length} invitation email(s) for room ${roomId}. Nodemailer results:`, results.map(r => r.response));
+      })
+      .catch((error) => {
+        // Lỗi này sẽ xuất hiện trên console Railway nếu gửi thất bại
+        console.error('!!! CRITICAL ERROR: Email sending failed. Check SENDGRID_API_KEY:', error.message);
+      });
   });
-  
-  // ✅ Gửi email trong background qua Resend API (không block response)
-  const emailHtml = `
-    <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 8px; max-width: 600px;">
-      <h2 style="color: #4285f4;">🎨 Lời mời tham gia CollabBoard</h2>
-      <p>Chào bạn,</p>
-      <p><strong>${req.user.name}</strong> (${req.user.email}) đã mời bạn tham gia vẽ cùng trên CollabBoard!</p>
-      <p style="margin-top: 30px; text-align: center;">
-        <a href="${shareUrl}" style="display: inline-block; padding: 14px 30px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
-          🚀 Tham gia ngay
-        </a>
-      </p>
-      <p style="font-size: 13px; color: #666; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
-        Hoặc copy link này: <br/>
-        <a href="${shareUrl}" style="color: #4285f4; word-break: break-all;">${shareUrl}</a>
-      </p>
-    </div>
-  `;
-  
-  const emailPromises = emails.map(email => 
-    sendEmailViaResend({
-      to: email,
-      subject: `${req.user.name} mời bạn vào CollabBoard`,
-      html: emailHtml
-    })
-  );
-  
-  // Xử lý email trong background
-  Promise.all(emailPromises)
-    .then((results) => {
-      console.log(`✅ Sent ${emails.length} email(s) for room ${roomId} via Resend API`);
-      console.log('Email IDs:', results.map(r => r.id).join(', '));
-    })
-    .catch((error) => {
-      console.error(`❌ Failed to send emails for room ${roomId}:`, error.message);
-      console.error('⚠️  Kiểm tra: RESEND_API_KEY có đúng không? Sender email đã verify chưa?');
-    });
-});
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
