@@ -15,14 +15,14 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: 'http://localhost:3000',
+    origin: 'https://collab-board-ptit.vercel.app',
     credentials: true,
     methods: ['GET', 'POST']
   }
 });
 
 app.use(cors({
-  origin: 'http://localhost:3000', 
+  origin: 'https://collab-board-ptit.vercel.app', 
   credentials: true
 }));
 
@@ -85,10 +85,10 @@ app.get('/auth/google',
 
 app.get('/auth/google/callback',
   passport.authenticate('google', { 
-    failureRedirect: 'http://localhost:3000' 
+    failureRedirect: 'https://collab-board-ptit.vercel.app' 
   }),
   (req, res) => {
-    res.redirect('http://localhost:3000');
+    res.redirect('https://collab-board-ptit.vercel.app');
   }
 );
 
@@ -132,7 +132,7 @@ app.post('/api/rooms/create', isAuthenticated, (req, res) => {
     createdBy: req.user.email,
     createdAt: new Date()
   });
-  res.json({ roomId, shareUrl: `http://localhost:3000/room/${roomId}` });
+  res.json({ roomId, shareUrl: `https://collab-board-ptit.vercel.app/room/${roomId}` });
 });
 
 // Get room info
@@ -175,7 +175,7 @@ app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
     }
   });
   
-  const shareUrl = `http://localhost:3000/room/${roomId}`;
+  const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
   const emailPromises = emails.map(email => {
     const mailOptions = {
       from: process.env.EMAIL_USER,
