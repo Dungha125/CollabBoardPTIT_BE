@@ -166,54 +166,68 @@ app.get('/api/rooms/:roomId', isAuthenticated, (req, res) => {
   });
 });
 
-// Send invitation email
 app.post('/api/rooms/invite', isAuthenticated, async (req, res) => {
-  const { roomId, emails } = req.body;
-  
-  if (!roomId || !emails || !Array.isArray(emails)) {
-    return res.status(400).json({ error: 'Invalid request' });
-  }
-  
-  const room = rooms.get(roomId);
-  if (!room) {
-    return res.status(404).json({ error: 'Room not found' });
-  }
-  
-  const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
-  
-  // ✅ Trả response ngay lập tức cho client (không chờ email)
-  res.json({ success: true, message: 'Đang gửi lời mời...' });
-  
-  // ✅ Gửi email bất đồng bộ ở background (không await)
-  const emailPromises = emails.map(email => {
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: `${req.user.name} đã mời bạn vào CollabBoard`,
-      html: `
-        <h2>Lời mời vẽ cùng nhau trên CollabBoard</h2>
-        <p>${req.user.name} (${req.user.email}) đã mời bạn tham gia vẽ cùng!</p>
-        <p>Click vào link dưới đây để tham gia:</p>
-        <a href="${shareUrl}" style="display: inline-block; padding: 10px 20px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 5px;">
-          Tham gia ngay
-        </a>
-        <p>Hoặc copy link này: ${shareUrl}</p>
-      `
-    };
-    
-    return emailTransporter.sendMail(mailOptions);
+    const { roomId, emails } = req.body;
+    
+    if (!roomId || !emails || !Array.isArray(emails)) {
+      return res.status(400).json({ error: 'Invalid request' });
+    }
+    
+    const room = rooms.get(roomId);
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    
+    // Cấu hình email Transporter sử dụng SendGrid API (Giải pháp cho lỗi ETIMEDOUT)
+    const transporter = nodemailer.createTransport({
+      service: 'SendGrid', // Thay vì 'gmail'
+      auth: {
+        user: 'apikey', // Bắt buộc phải là 'apikey' cho SendGrid
+        pass: process.env.SENDGRID_API_KEY // KHÓA API CỦA SENDGRID
+      },
+      // Loại bỏ host, port, secure, requireTLS, timeout vì SendGrid Service tự xử lý
+    });
+    
+    const shareUrl = `https://collab-board-ptit.vercel.app/room/${roomId}`;
+    
+    // Trả response ngay lập tức cho client
+    res.json({ success: true, message: 'Đang gửi lời mời...' });
+    
+    // Gửi email bất đồng bộ ở background (không chờ)
+    const emailPromises = emails.map(email => {
+      const mailOptions = {
+        // Từ email phải là một email đã được xác minh trên SendGrid
+        from: `"${req.user.name} (CollabBoard)" <${process.env.EMAIL_USER}>`, 
+        to: email,
+        subject: `Lời mời: ${req.user.name} muốn vẽ cùng bạn trên CollabBoard`, // Subject chi tiết hơn
+        html: `
+          <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
+            <h2 style="color: #4285f4;">Bạn có một lời mời tham gia bảng vẽ!</h2>
+            <p>Chào bạn,</p>
+            <p><strong>${req.user.name}</strong> (${req.user.email}) đã mời bạn tham gia phòng vẽ chung trên CollabBoard.</p>
+            <p style="margin-top: 20px;">
+              <a href="${shareUrl}" style="display: inline-block; padding: 12px 25px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                THAM GIA PHÒNG VẼ NGAY
+              </a>
+            </p>
+            <p style="font-size: 12px; color: #888; margin-top: 30px;">Nếu nút trên không hoạt động, bạn có thể sao chép liên kết này: ${shareUrl}</p>
+          </div>
+        `
+      };
+      
+      return transporter.sendMail(mailOptions);
+    });
+    
+    // Xử lý lỗi trong background và log chi tiết
+    Promise.all(emailPromises)
+      .then((results) => {
+        console.log(`✓ Sent ${emails.length} invitation email(s) for room ${roomId}. Nodemailer results:`, results.map(r => r.response));
+      })
+      .catch((error) => {
+        // Lỗi này sẽ xuất hiện trên console Railway nếu gửi thất bại
+        console.error('!!! CRITICAL ERROR: Email sending failed. Check SENDGRID_API_KEY:', error.message);
+      });
   });
-  
-  // ✅ Xử lý email trong background (không block response)
-  Promise.all(emailPromises)
-    .then(() => {
-      console.log(`✓ Sent ${emails.length} invitation email(s) for room ${roomId}`);
-    })
-    .catch((error) => {
-      console.error('✗ Error sending emails:', error);
-      // Email failed nhưng user đã nhận được response, không ảnh hưởng UX
-    });
-});
 
 // Socket.io connection handling
 io.on('connection', (socket) => {

@@ -44,14 +44,34 @@ cp .env.example .env
    - Authorized redirect URIs: `http://localhost:5000/auth/google/callback`
 5. Copy Client ID và Client Secret vào file `.env`
 
-### Cấu hình Email (Gmail):
+### Cấu hình Email:
+
+**🚀 Production (Railway/Vercel) - Dùng Resend API (Recommended):**
+
+⚠️ **Lưu ý:** Railway và các hosting platforms thường **chặn SMTP port 587/465**, gây lỗi timeout.
+
+1. Tạo tài khoản miễn phí tại [Resend.com](https://resend.com/signup)
+2. Lấy API Key tại https://resend.com/api-keys
+3. Thêm vào `.env`:
+   ```bash
+   RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   EMAIL_FROM=CollabBoard <onboarding@resend.dev>
+   ```
+
+**📖 Xem hướng dẫn chi tiết:** [SETUP_EMAIL.md](./SETUP_EMAIL.md)
+
+**🏠 Local Development - Gmail SMTP (Fallback):**
+
+Khi không có `RESEND_API_KEY`, server tự động dùng Gmail:
 
 1. Bật xác thực 2 yếu tố cho tài khoản Google
 2. Truy cập https://myaccount.google.com/apppasswords
 3. Tạo "App Password" mới
-4. Copy email và app password vào `.env`:
-   - `EMAIL_USER`: địa chỉ Gmail của bạn
-   - `EMAIL_PASS`: app password vừa tạo (không phải mật khẩu Gmail thường)
+4. Copy vào `.env`:
+   ```bash
+   EMAIL_USER=your-email@gmail.com
+   EMAIL_PASS=your-16-char-app-password
+   ```
 
 ## Chạy server
 
