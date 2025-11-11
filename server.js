@@ -114,11 +114,11 @@ app.get('/auth/google',
 
 app.get('/auth/google/callback',
   passport.authenticate('google', { 
-    failureRedirect: 'http://localhost:3000' 
+    failureRedirect: 'https://collab-board-ptit.vercel.app' 
   }),
   (req, res) => {
     console.log('✓ User logged in:', req.user?.email);
-    res.redirect('http://localhost:3000');
+    res.redirect('https://collab-board-ptit.vercel.app');
   }
 );
 
@@ -157,13 +157,12 @@ const userRoomCreationTimestamps = new Map(); // userId -> timestamp (rate limit
 app.post('/api/rooms/create', isAuthenticated, async (req, res) => {
   try {
     const userId = req.user.dbId;
-
     const lastCreation = userRoomCreationTimestamps.get(userId) || 0;
     const now = Date.now();
     const timeSinceLastCreation = now - lastCreation;
     
-    if (timeSinceLastCreation < 2000) { // 2 seconds cooldown
-      console.log(`⚠️  User ${req.user.email} trying to create room too quickly. Blocked.`);
+    if (timeSinceLastCreation < 2000) { 
+      console.log(`User ${req.user.email} trying to create room too quickly. Blocked.`);
       return res.status(429).json({ 
         error: 'Please wait before creating another room',
         retryAfter: Math.ceil((2000 - timeSinceLastCreation) / 1000)
@@ -175,7 +174,7 @@ app.post('/api/rooms/create', isAuthenticated, async (req, res) => {
     
     const { name, description } = req.body;
     
-    console.log(`🏗️  Creating room for user ${req.user.email}...`);
+    console.log(`Creating room for user ${req.user.email}...`);
     
     // Create room in database
     const dbRoom = await roomQueries.createRoom(
@@ -202,7 +201,7 @@ app.post('/api/rooms/create', isAuthenticated, async (req, res) => {
       shareUrl: `http://localhost:3000/room/${dbRoom.id}` 
     });
   } catch (error) {
-    console.error('❌ Error creating room:', error);
+    console.error('Error creating room:', error);
     res.status(500).json({ error: 'Failed to create room' });
   }
 });
@@ -493,7 +492,7 @@ io.on('connection', (socket) => {
             room.appState = JSON.parse(roomData.app_state || '{}');
             console.log(`✓ Loaded room data from database for ${roomId} (${room.elements.length} elements, version ${roomData.version})`);
           } else {
-            console.log(`ℹ️  No saved data found for room ${roomId}, starting fresh`);
+            console.log(`No saved data found for room ${roomId}, starting fresh`);
           }
         } catch (dbError) {
           console.warn(`⚠️  Could not load room data from DB:`, dbError.message);
