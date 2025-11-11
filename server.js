@@ -15,14 +15,14 @@ const { userQueries, roomQueries, collaboratorQueries, roomDataQueries } = requi
 const app = express();
 const server = http.createServer(app);
 
-// Tạo transporter 1 lần duy nhất (reuse cho tất cả requests)
+// Tạo transporter 1 lần duy nhất 
 const emailTransporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
   },
-  pool: true, // Sử dụng connection pooling
+  pool: true, 
   maxConnections: 5,
   maxMessages: 100
 });
@@ -46,10 +46,10 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
   resave: false,
   saveUninitialized: false,
-  // proxy: true,
+  proxy: true,
   cookie: {
-    sameSite: 'strict',  
-    secure: false,
+    sameSite: 'none',  
+    secure: true,
     httpOnly: true,
     maxAge: 24 * 60 * 60 * 1000
   }
@@ -157,8 +157,7 @@ const userRoomCreationTimestamps = new Map(); // userId -> timestamp (rate limit
 app.post('/api/rooms/create', isAuthenticated, async (req, res) => {
   try {
     const userId = req.user.dbId;
-    
-    // Rate limiting: Prevent user from creating multiple rooms too quickly
+
     const lastCreation = userRoomCreationTimestamps.get(userId) || 0;
     const now = Date.now();
     const timeSinceLastCreation = now - lastCreation;
