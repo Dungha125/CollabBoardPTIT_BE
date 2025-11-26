@@ -36,7 +36,7 @@ const emailTransporter = nodemailer.createTransport({
 
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:3000", "https://collab-board-ptit.vercel.app"],
+    origin: ["https://colabo.dhatech.pro"],
     credentials: true,
     methods: ["GET", "POST"],
   },
@@ -44,7 +44,7 @@ const io = new Server(server, {
 
 app.use(
   cors({
-    origin: ["http://localhost:3000", "https://collab-board-ptit.vercel.app"],
+    origin: ["https://colabo.dhatech.pro"],
     credentials: true,
   })
 );
@@ -161,11 +161,11 @@ app.get(
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", {
-    failureRedirect: "http://localhost:3000",
+    failureRedirect: "https://colabo.dhatech.pro",
   }),
   (req, res) => {
     console.log("✓ User logged in:", req.user?.email);
-    res.redirect("http://localhost:3000");
+    res.redirect("https://colabo.dhatech.pro");
   }
 );
 
@@ -254,7 +254,7 @@ app.post("/api/rooms/create", isAuthenticated, async (req, res) => {
     res.json({
       roomId: dbRoom.id,
       room: dbRoom,
-      shareUrl: `http://localhost:3000/room/${dbRoom.id}`,
+      shareUrl: `https://colabo.dhatech.proroom/${dbRoom.id}`,
     });
   } catch (error) {
     console.error("Error creating room:", error);
@@ -534,7 +534,7 @@ app.post("/api/rooms/invite", isAuthenticated, async (req, res) => {
     return res.status(404).json({ error: "Room not found" });
   }
 
-  const shareUrl = `http://localhost:3000/room/${roomId}`;
+  const shareUrl = `https://colabo.dhatech.proroom/${roomId}`;
 
   res.json({ success: true, message: "Đang gửi lời mời..." });
 
