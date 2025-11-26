@@ -87,10 +87,10 @@ app.use(
     secret: process.env.SESSION_SECRET || "your-secret-key-change-this",
     resave: false,
     saveUninitialized: false,
-    // proxy: true,
+    proxy: true,
     cookie: {
-      sameSite: "strict",
-      secure: false,
+      sameSite: "none",
+      secure: true,
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
     },
