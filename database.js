@@ -8,7 +8,7 @@ const pool = mysql.createPool({
   port: process.env.DB_PORT || 3306,
   database: process.env.DB_NAME || 'collabboard_db',
   user: process.env.DB_USER || 'collabboard_user',
-  password: process.env.DB_PASSWORD,
+  password: process.env.DB_PASSWORD || 'matkhau123',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -52,7 +52,6 @@ const userQueries = {
          VALUES (?, ?, ?, ?)`,
         [googleId, email, name, picture]
       );
-      
       // Get the created user
       const [newUsers] = await connection.query(
         'SELECT * FROM users WHERE id = ?',
@@ -86,6 +85,14 @@ const userQueries = {
       [userId]
     );
     return users[0];
+  },
+
+  async updateUserName(userId, name) {
+    const [result] = await pool.query(
+      'UPDATE users SET name = ? WHERE id = ?',
+      [name, userId]
+    );
+    return result;
   }
 };
 
@@ -186,7 +193,6 @@ const roomQueries = {
     }
 
     if (fields.length === 0) return null;
-
     fields.push('updated_at = CURRENT_TIMESTAMP');
     values.push(roomId);
 
@@ -300,7 +306,6 @@ const roomDataQueries = {
          updated_at = CURRENT_TIMESTAMP`,
       [roomId, JSON.stringify(elements), JSON.stringify(appState), updatedBy]
     );
-    
     // Lấy record đã save
     const [data] = await pool.query(
       'SELECT * FROM room_data WHERE room_id = ?',
@@ -333,6 +338,301 @@ const roomDataQueries = {
     return data;
   }
 };
+// query for chat messages
+const chatQueries = {
+  // Lưu tin nhắn
+  async saveMessage(roomId, senderId, content, googleId, type = 'text') {
+    const [result] = await pool.query(
+      `INSERT INTO messages (room_id, sender_id, content, type)
+       VALUES (?, ?, ?, ?)`,
+      [roomId, senderId, content, type]
+    );
+    // Lấy lại tin nhắn vừa lưu
+    const [messages] = await pool.query(
+      `SELECT m.*, u.name as sender_name, u.email as sender_email, u.picture as sender_picture
+       FROM messages m
+       JOIN users u ON m.sender_id = u.id
+       WHERE m.id = ?`,
+      [result.insertId]
+    );
+    return messages[0];
+  },
+
+  // Lấy tất cả tin nhắn của room (có thể phân trang)
+  async getMessagesByRoom(roomId, limit = 100, offset = 0) {
+    const [messages] = await pool.query(
+      `SELECT m.*, u.name as sender_name, u.email as sender_email, u.picture as sender_picture
+       FROM messages m
+       JOIN users u ON m.sender_id = u.id
+       WHERE m.room_id = ?
+       ORDER BY m.created_at ASC
+       LIMIT ? OFFSET ?`,
+      [roomId, limit, offset]
+    );
+    return messages;
+  },
+
+  // Lấy tin nhắn mới nhất
+  async getLatestMessages(roomId, limit = 50) {
+    const [messages] = await pool.query(
+      `SELECT m.*, u.name as sender_name, u.email as sender_email, u.picture as sender_picture, u.google_id as sender_google_id
+       FROM messages m
+       JOIN users u ON m.sender_id = u.id
+       WHERE m.room_id = ?
+       ORDER BY m.created_at DESC
+       LIMIT ?`,
+      [roomId, limit]
+    );
+    // Sắp xếp lại theo thứ tự thời gian tăng dần
+    return messages.reverse();
+  }
+};
+
+// Analytics queries
+const analyticsQueries = {
+  // Track page visit
+  async trackVisit(userId, ipAddress, userAgent, pageUrl, country = 'Unknown', countryCode = null, city = null, sessionId = null) {
+    try {
+      const [result] = await pool.query(
+        `INSERT INTO page_visits (user_id, ip_address, user_agent, page_url, country, country_code, city, session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, ipAddress, userAgent, pageUrl, country, countryCode, city, sessionId]
+      );
+      return result.insertId;
+    } catch (error) {
+      console.error('Error tracking visit:', error);
+      return null;
+    }
+  },
+
+  // Track user activity
+  async trackActivity(userId, roomId, activityType, details = null) {
+    try {
+      const [result] = await pool.query(
+        `INSERT INTO user_activities (user_id, room_id, activity_type, details)
+         VALUES (?, ?, ?, ?)`,
+        [userId, roomId, activityType, JSON.stringify(details)]
+      );
+      return result.insertId;
+    } catch (error) {
+      console.error('Error tracking activity:', error);
+      return null;
+    }
+  },
+
+  // Get total visits in time range
+  async getTotalVisits(days = 30) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT COUNT(*) AS total_visits
+         FROM page_visits
+         WHERE visited_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
+        [days]
+      );
+      return rows[0].total_visits || 0;
+    } catch (error) {
+      console.error('Error getting total visits:', error);
+      return 0;
+    }
+  },
+
+  // Get unique users in time range
+  async getUniqueUsers(days = 30) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT COUNT(DISTINCT user_id) AS unique_users
+         FROM page_visits
+         WHERE visited_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+         AND user_id IS NOT NULL`,
+        [days]
+      );
+      return rows[0].unique_users || 0;
+    } catch (error) {
+      console.error('Error getting unique users:', error);
+      return 0;
+    }
+  },
+
+  // Get visits by date
+  async getVisitsByDate(days = 30) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT 
+          DATE_FORMAT(visited_at, '%b %d') AS date,
+          COUNT(*) AS visits
+         FROM page_visits
+         WHERE visited_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+         GROUP BY DATE(visited_at)
+         ORDER BY visited_at ASC`,
+        [days]
+      );
+      return rows;
+    } catch (error) {
+      console.error('Error getting visits by date:', error);
+      return [];
+    }
+  },
+
+  // Get visits by country
+  async getVisitsByCountry(limit = 20) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT 
+          country,
+          country_code,
+          COUNT(*) AS visits
+         FROM page_visits
+         WHERE country != 'Unknown'
+         GROUP BY country, country_code
+         ORDER BY visits DESC
+         LIMIT ?`,
+        [limit]
+      );
+      return rows;
+    } catch (error) {
+      console.error('Error getting visits by country:', error);
+      return [];
+    }
+  },
+
+  // Get recent visits
+  async getRecentVisits(limit = 20) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT 
+          pv.id,
+          pv.country,
+          pv.country_code,
+          pv.visited_at AS timestamp,
+          COALESCE(u.name, 'Anonymous') AS user_name,
+          pv.page_url
+         FROM page_visits pv
+         LEFT JOIN users u ON pv.user_id = u.id
+         ORDER BY pv.visited_at DESC
+         LIMIT ?`,
+        [limit]
+      );
+      return rows;
+    } catch (error) {
+      console.error('Error getting recent visits:', error);
+      return [];
+    }
+  },
+
+  // Get countries count
+  async getCountriesCount() {
+    try {
+      const [rows] = await pool.query(
+        `SELECT COUNT(DISTINCT country) AS total_countries
+         FROM page_visits
+         WHERE country != 'Unknown'`
+      );
+      return rows[0].total_countries || 0;
+    } catch (error) {
+      console.error('Error getting countries count:', error);
+      return 0;
+    }
+  },
+
+  // Get growth percentage
+  async getGrowthPercentage(metric = 'visits', days = 7) {
+    try {
+      const currentPeriod = await pool.query(
+        `SELECT COUNT(*) AS count
+         FROM page_visits
+         WHERE visited_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
+        [days]
+      );
+      
+      const previousPeriod = await pool.query(
+        `SELECT COUNT(*) AS count
+         FROM page_visits
+         WHERE visited_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+         AND visited_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+        [days * 2, days]
+      );
+      
+      const current = currentPeriod[0][0].count || 0;
+      const previous = previousPeriod[0][0].count || 1;
+      
+      return parseFloat(((current - previous) / previous * 100).toFixed(1));
+    } catch (error) {
+      console.error('Error getting growth percentage:', error);
+      return 0;
+    }
+  },
+
+  // Get user activities
+  async getUserActivities(userId, limit = 10) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT 
+          ua.activity_type,
+          r.name AS room_name,
+          ua.created_at AS timestamp
+         FROM user_activities ua
+         LEFT JOIN rooms r ON ua.room_id = r.id
+         WHERE ua.user_id = ?
+         ORDER BY ua.created_at DESC
+         LIMIT ?`,
+        [userId, limit]
+      );
+      return rows;
+    } catch (error) {
+      console.error('Error getting user activities:', error);
+      return [];
+    }
+  },
+
+  // Update room statistics
+  async updateRoomStats(roomId, type) {
+    try {
+      // Ensure room stats entry exists
+      await pool.query(
+        `INSERT INTO room_statistics (room_id)
+         VALUES (?)
+         ON DUPLICATE KEY UPDATE room_id = room_id`,
+        [roomId]
+      );
+
+      // Update the counter
+      const field = type === 'view' ? 'view_count' : 
+                    type === 'message' ? 'message_count' : 'drawing_count';
+      
+      await pool.query(
+        `UPDATE room_statistics
+         SET ${field} = ${field} + 1,
+             last_activity = CURRENT_TIMESTAMP
+         WHERE room_id = ?`,
+        [roomId]
+      );
+    } catch (error) {
+      console.error('Error updating room stats:', error);
+    }
+  },
+
+  // Get room statistics
+  async getRoomStats(roomId) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT * FROM room_statistics WHERE room_id = ?`,
+        [roomId]
+      );
+      return rows[0] || {
+        view_count: 0,
+        message_count: 0,
+        drawing_count: 0
+      };
+    } catch (error) {
+      console.error('Error getting room stats:', error);
+      return {
+        view_count: 0,
+        message_count: 0,
+        drawing_count: 0
+      };
+    }
+  }
+};
 
 module.exports = {
   pool,
@@ -340,6 +640,8 @@ module.exports = {
   roomQueries,
   collaboratorQueries,
   roomDataQueries,
+  chatQueries,
+  analyticsQueries,
   // Export query function for custom queries
   query: async (sql, params) => {
     const [rows] = await pool.query(sql, params);
