@@ -4,11 +4,11 @@ require('dotenv').config();
 
 // Create connection pool
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  database: process.env.DB_NAME || 'collabboard_db',
-  user: process.env.DB_USER || 'collabboard_user',
-  password: process.env.DB_PASSWORD || 'matkhau123',
+  host: process.env.DB_HOST || 'shuttle.proxy.rlwy.net',
+  port: process.env.DB_PORT || 36767,
+  database: process.env.DB_NAME || 'railway',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'ihzobdrgUVeWfDqLxdLIEMmOmqwyOTrD',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
